@@ -71,30 +71,36 @@
             background-color: #dc2626;
         }
 
-        /* Grid Layout Configuration */
+        /* Fixed Grid Footprint Container */
         #grid-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
             width: 450px;
             height: 450px;
             background-color: #ffffff;
             border-radius: 8px;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
             padding: 10px;
+            box-sizing: border-box;
         }
 
-        table {
-            border-collapse: collapse;
+        /* Dynamic CSS Grid configuration replaces the HTML <table> layout */
+        #pixelGrid {
+            display: grid;
             width: 100%;
             height: 100%;
-            table-layout: fixed; /* Guarantees equal sizing across cells */
+            gap: 2px; /* White space separation between grid cells */
+            background-color: #ffffff;
         }
 
-        td {
-            border: 2px solid #ffffff; /* White space separation */
+        .grid-cell {
+            display: flex;
+            justify-content: center;
+            align-items: center;
             cursor: pointer;
+            font-weight: bold;
+            font-size: 1.25rem;
+            color: #9ca3af; /* Default gray text color */
             transition: background-color 0.15s ease;
+            box-sizing: border-box;
         }
 
         /* State Classes */
@@ -123,7 +129,7 @@
 
     <!-- Container keeping the grid a fixed total shape -->
     <div id="grid-container">
-        <table id="pixelGrid"></table>
+        <div id="pixelGrid"></div>
     </div>
 
     <script>
@@ -133,8 +139,11 @@
         const resetBtn = document.getElementById('resetBtn');
         const undoBtn = document.getElementById('undoBtn');
 
-        // History stack to track preceding board allocations
+        // History stack to track preceding board states
         let historyStack = [];
+        
+        // Counter to track the placement order index of black cells
+        let blackCellCount = 0;
 
         // Definitions for orthogonal neighbor offsets (Up, Down, Left, Right)
         const directions = [
@@ -144,38 +153,66 @@
             { r: 0,  c: 1 }  // Right
         ];
 
-        // Initializes or redraws the table based on size dimensions
+        // Initializes or redraws the grid based on size dimensions
         function createGrid(size) {
             grid.innerHTML = ''; // Clear previous grid contents
-            historyStack = [];   // Clear change states tracking history
+            historyStack = [];   // Clear change history tracking
+            blackCellCount = 0;  // Reset index counter
             updateUndoButtonState();
+
+            // Set dynamic grid templates to enforce equal sizing instantly
+            grid.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
+            grid.style.gridTemplateRows = `repeat(${size}, 1fr)`;
             
             for (let r = 0; r < size; r++) {
-                const tr = document.createElement('tr');
                 for (let c = 0; c < size; c++) {
-                    const td = document.createElement('td');
+                    const cell = document.createElement('div');
                     
                     // Assign dataset coordinate indices for spatial mapping
-                    td.dataset.row = r;
-                    td.dataset.col = c;
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
                     
-                    // All cells start out as gray
-                    td.className = 'cell-gray';
+                    // All cells start out as gray with no text
+                    cell.className = 'grid-cell cell-gray';
+                    cell.textContent = '';
+                    
+                    // Dynamic scaling adjustments so text fits well on larger grids
+                    if (size > 7) {
+                        cell.style.fontSize = '0.9rem';
+                    } else if (size > 5) {
+                        cell.style.fontSize = '1.1rem';
+                    } else {
+                        cell.style.fontSize = '1.35rem';
+                    }
                     
                     // Click handler tied directly to the cell context
-                    td.addEventListener('click', () => handleCellClick(r, c, size));
+                    cell.addEventListener('click', () => handleCellClick(r, c, size));
                     
-                    tr.appendChild(td);
+                    grid.appendChild(cell);
                 }
-                grid.appendChild(tr);
             }
         }
 
-        // Saves current state classes of all cells into history array
+        // Helper function to easily target specific cells via coordinate queries
+        function getCell(row, col) {
+            return grid.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+        }
+
+        // Saves current state classes and text of all cells into history array
         function saveHistoryState() {
-            const allCells = grid.querySelectorAll('td');
-            const stateSnapshot = Array.from(allCells).map(cell => cell.className);
-            historyStack.push(stateSnapshot);
+            const allCells = grid.querySelectorAll('.grid-cell');
+            
+            // Map both className and current textContent so indices match perfectly on undo
+            const stateSnapshot = Array.from(allCells).map(cell => ({
+                className: cell.className,
+                text: cell.textContent
+            }));
+            
+            // Save snapshot alongside current index counter value
+            historyStack.push({
+                board: stateSnapshot,
+                counter: blackCellCount
+            });
             updateUndoButtonState();
         }
 
@@ -186,7 +223,7 @@
 
         // Logic processing clicks and executing directional paths
         function handleCellClick(startRow, startCol, size) {
-            const clickedCell = grid.rows[startRow].cells[startCol];
+            const clickedCell = getCell(startRow, startCol);
 
             // 1. Ignore if the clicked cell itself is black or green
             if (clickedCell.classList.contains('cell-black') || clickedCell.classList.contains('cell-green')) {
@@ -200,8 +237,8 @@
 
                 // Ensure neighbor coordinates are within grid boundaries
                 if (neighborRow >= 0 && neighborRow < size && neighborCol >= 0 && neighborCol < size) {
-                    const neighborCell = grid.rows[neighborRow].cells[neighborCol];
-                    if (neighborCell.classList.contains('cell-black')) {
+                    const neighborCell = getCell(neighborRow, neighborCol);
+                    if (neighborCell && neighborCell.classList.contains('cell-black')) {
                         return; // Halt completely if a black neighbor is found
                     }
                 }
@@ -210,8 +247,10 @@
             // A valid execution path is confirmed, save history state snapshot first
             saveHistoryState();
 
-            // Turn target origin black
-            clickedCell.className = 'cell-black';
+            // Increment black cell tally and update text content inside the element
+            blackCellCount++;
+            clickedCell.className = 'grid-cell cell-black';
+            clickedCell.textContent = blackCellCount;
 
             // Travel outward in 4 straight lines
             directions.forEach(dir => {
@@ -220,7 +259,7 @@
 
                 // Move outward step-by-step along the vector until hitting structural bounds
                 while (currentRow >= 0 && currentRow < size && currentCol >= 0 && currentCol < size) {
-                    const cell = grid.rows[currentRow].cells[currentCol];
+                    const cell = getCell(currentRow, currentCol);
 
                     // Terminate path instantly if colliding into an existing black cell
                     if (cell.classList.contains('cell-black')) {
@@ -229,9 +268,9 @@
 
                     // Perform a two-state flip toggling variant between gray and green
                     if (cell.classList.contains('cell-gray')) {
-                        cell.className = 'cell-green';
+                        cell.className = 'grid-cell cell-green';
                     } else if (cell.classList.contains('cell-green')) {
-                        cell.className = 'cell-gray';
+                        cell.className = 'grid-cell cell-gray';
                     }
 
                     // Advance cursor further along the direction path
@@ -245,11 +284,16 @@
         undoBtn.addEventListener('click', () => {
             if (historyStack.length === 0) return;
             
-            const previousState = historyStack.pop();
-            const allCells = grid.querySelectorAll('td');
+            const lastHistoryEntry = historyStack.pop();
+            const previousBoard = lastHistoryEntry.board;
             
+            // Revert global counter to match this point in time
+            blackCellCount = lastHistoryEntry.counter;
+            
+            const allCells = grid.querySelectorAll('.grid-cell');
             allCells.forEach((cell, index) => {
-                cell.className = previousState[index];
+                cell.className = previousBoard[index].className;
+                cell.textContent = previousBoard[index].text;
             });
             
             updateUndoButtonState();
@@ -260,9 +304,11 @@
             // Save state prior to wipe sequence to allow reversing the reset operation
             saveHistoryState();
             
-            const allCells = grid.querySelectorAll('td');
+            blackCellCount = 0;
+            const allCells = grid.querySelectorAll('.grid-cell');
             allCells.forEach(cell => {
-                cell.className = 'cell-gray';
+                cell.className = 'grid-cell cell-gray';
+                cell.textContent = '';
             });
         });
 
@@ -279,3 +325,4 @@
 
 </body>
 </html>
+                    
