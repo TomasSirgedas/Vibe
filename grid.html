@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Interactive Grid</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f4f4f9;
+            font-family: Arial, sans-serif;
+            user-select: none; /* Prevents text selection highlighting on fast clicks */
+        }
+
+        /* Controls Panel Style */
+        .controls {
+            margin-bottom: 25px;
+            background: #ffffff;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .controls label {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .controls input[type="range"] {
+            cursor: pointer;
+        }
+
+        /* Button Styling */
+        button {
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+
+        .btn-undo {
+            background-color: #3b82f6; /* Blue */
+        }
+
+        .btn-undo:hover:not(:disabled) {
+            background-color: #2563eb;
+        }
+
+        .btn-undo:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .btn-reset {
+            background-color: #ef4444; /* Red */
+        }
+
+        .btn-reset:hover {
+            background-color: #dc2626;
+        }
+
+        /* Grid Layout Configuration */
+        #grid-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 450px;
+            height: 450px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            padding: 10px;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            height: 100%;
+            table-layout: fixed; /* Guarantees equal sizing across cells */
+        }
+
+        td {
+            border: 2px solid #ffffff; /* White space separation */
+            cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+
+        /* State Classes */
+        .cell-gray {
+            background-color: #d1d5db; /* Default Gray */
+        }
+
+        .cell-green {
+            background-color: #22c55e; /* Vibrant Green */
+        }
+
+        .cell-black {
+            background-color: #111827; /* Near Black */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Controls Panel -->
+    <div class="controls">
+        <label for="sizeSlider">Grid Size: <span id="sizeValue">5x5</span></label>
+        <input type="range" id="sizeSlider" min="3" max="10" value="5">
+        <button class="btn-undo" id="undoBtn" disabled>Undo</button>
+        <button class="btn-reset" id="resetBtn">Reset Grid</button>
+    </div>
+
+    <!-- Container keeping the grid a fixed total shape -->
+    <div id="grid-container">
+        <table id="pixelGrid"></table>
+    </div>
+
+    <script>
+        const slider = document.getElementById('sizeSlider');
+        const sizeValue = document.getElementById('sizeValue');
+        const grid = document.getElementById('pixelGrid');
+        const resetBtn = document.getElementById('resetBtn');
+        const undoBtn = document.getElementById('undoBtn');
+
+        // History stack to track preceding board allocations
+        let historyStack = [];
+
+        // Definitions for orthogonal neighbor offsets (Up, Down, Left, Right)
+        const directions = [
+            { r: -1, c: 0 }, // Up
+            { r: 1,  c: 0 }, // Down
+            { r: 0,  c: -1 }, // Left
+            { r: 0,  c: 1 }  // Right
+        ];
+
+        // Initializes or redraws the table based on size dimensions
+        function createGrid(size) {
+            grid.innerHTML = ''; // Clear previous grid contents
+            historyStack = [];   // Clear change states tracking history
+            updateUndoButtonState();
+            
+            for (let r = 0; r < size; r++) {
+                const tr = document.createElement('tr');
+                for (let c = 0; c < size; c++) {
+                    const td = document.createElement('td');
+                    
+                    // Assign dataset coordinate indices for spatial mapping
+                    td.dataset.row = r;
+                    td.dataset.col = c;
+                    
+                    // All cells start out as gray
+                    td.className = 'cell-gray';
+                    
+                    // Click handler tied directly to the cell context
+                    td.addEventListener('click', () => handleCellClick(r, c, size));
+                    
+                    tr.appendChild(td);
+                }
+                grid.appendChild(tr);
+            }
+        }
+
+        // Saves current state classes of all cells into history array
+        function saveHistoryState() {
+            const allCells = grid.querySelectorAll('td');
+            const stateSnapshot = Array.from(allCells).map(cell => cell.className);
+            historyStack.push(stateSnapshot);
+            updateUndoButtonState();
+        }
+
+        // Toggles interactive clickable property of the Undo button interface element
+        function updateUndoButtonState() {
+            undoBtn.disabled = historyStack.length === 0;
+        }
+
+        // Logic processing clicks and executing directional paths
+        function handleCellClick(startRow, startCol, size) {
+            const clickedCell = grid.rows[startRow].cells[startCol];
+
+            // 1. Ignore if the clicked cell itself is black or green
+            if (clickedCell.classList.contains('cell-black') || clickedCell.classList.contains('cell-green')) {
+                return;
+            }
+
+            // 2. Ignore if any orthogonal neighbor is black
+            for (let i = 0; i < directions.length; i++) {
+                const neighborRow = startRow + directions[i].r;
+                const neighborCol = startCol + directions[i].c;
+
+                // Ensure neighbor coordinates are within grid boundaries
+                if (neighborRow >= 0 && neighborRow < size && neighborCol >= 0 && neighborCol < size) {
+                    const neighborCell = grid.rows[neighborRow].cells[neighborCol];
+                    if (neighborCell.classList.contains('cell-black')) {
+                        return; // Halt completely if a black neighbor is found
+                    }
+                }
+            }
+
+            // A valid execution path is confirmed, save history state snapshot first
+            saveHistoryState();
+
+            // Turn target origin black
+            clickedCell.className = 'cell-black';
+
+            // Travel outward in 4 straight lines
+            directions.forEach(dir => {
+                let currentRow = startRow + dir.r;
+                let currentCol = startCol + dir.c;
+
+                // Move outward step-by-step along the vector until hitting structural bounds
+                while (currentRow >= 0 && currentRow < size && currentCol >= 0 && currentCol < size) {
+                    const cell = grid.rows[currentRow].cells[currentCol];
+
+                    // Terminate path instantly if colliding into an existing black cell
+                    if (cell.classList.contains('cell-black')) {
+                        break;
+                    }
+
+                    // Perform a two-state flip toggling variant between gray and green
+                    if (cell.classList.contains('cell-gray')) {
+                        cell.className = 'cell-green';
+                    } else if (cell.classList.contains('cell-green')) {
+                        cell.className = 'cell-gray';
+                    }
+
+                    // Advance cursor further along the direction path
+                    currentRow += dir.r;
+                    currentCol += dir.c;
+                }
+            });
+        }
+
+        // Undo Button Event Listener: Pops and overwrites elements back one step frame
+        undoBtn.addEventListener('click', () => {
+            if (historyStack.length === 0) return;
+            
+            const previousState = historyStack.pop();
+            const allCells = grid.querySelectorAll('td');
+            
+            allCells.forEach((cell, index) => {
+                cell.className = previousState[index];
+            });
+            
+            updateUndoButtonState();
+        });
+
+        // Reset Button Event Listener: Toggles all active classes back to default gray
+        resetBtn.addEventListener('click', () => {
+            // Save state prior to wipe sequence to allow reversing the reset operation
+            saveHistoryState();
+            
+            const allCells = grid.querySelectorAll('td');
+            allCells.forEach(cell => {
+                cell.className = 'cell-gray';
+            });
+        });
+
+        // Event listener to monitor slider configurations dynamically
+        slider.addEventListener('input', (e) => {
+            const size = parseInt(e.target.value);
+            sizeValue.textContent = `${size}x${size}`;
+            createGrid(size);
+        });
+
+        // Bootstrap initial run setup
+        createGrid(parseInt(slider.value));
+    </script>
+
+</body>
+</html>
